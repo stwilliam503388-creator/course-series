@@ -1,0 +1,1 @@
+.gitignore\n__pycache__/\n.DS_Store\nvenv/\n.env\n*.png
