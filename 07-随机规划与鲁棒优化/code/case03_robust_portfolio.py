@@ -186,17 +186,18 @@ def solve_medium():
     global N, r, sigma
     old_N = N
     N = 20
-    r = rng.uniform(0.05, 0.20, N)
-    sigma = rng.uniform(0.02, 0.08, N)
+    rng_local = np.random.default_rng(99)
+    r = rng_local.uniform(0.05, 0.20, N)
+    sigma = rng_local.uniform(0.02, 0.08, N)
     for Gamma in [0, 5, 10, 20]:
         w, obj = solve_budget_robust(Gamma)
         worst = worst_case_return(w, Gamma)
         print(f"Γ={Gamma:>2}: 期望收益={obj:.4f}, 最坏收益={worst:.4f}")
-    N = old_N
     # 恢复原始数据
-    rng = np.random.default_rng(42)
-    r = rng.uniform(0.05, 0.20, N)
-    sigma = rng.uniform(0.02, 0.08, N)
+    N = old_N
+    rng_restore = np.random.default_rng(42)
+    r = rng_restore.uniform(0.05, 0.20, N)
+    sigma = rng_restore.uniform(0.02, 0.08, N)
 
 
 if __name__ == "__main__":
