@@ -166,5 +166,7 @@
 | `appendix-c-ml-intersection.md` | 附录C：运筹学 × ML 的交叉点 | ~800 |
 | `appendix-d-reading-list.md` | 附录D：推荐阅读 | ~500 |
 
+> **C++ 版本**：SB3（元启发式/TSP）提供 C++ 实现，位于 `code/case_metaheuristic_tsp_cpp.cpp`，含模拟退火与遗传算法。
+
 ---
 
