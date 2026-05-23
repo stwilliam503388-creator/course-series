@@ -280,4 +280,18 @@ CFL 限制: dt ≤ 104.2 μs (α·dt/dx² ≤ 0.5)
 
 ---
 
+## C++ 版本
+
+本案例的热传导方程提供 C++ 实现，位于 `code/case03_heat_cpp.cpp`。编译与运行：
+
+```bash
+cd code
+g++ -O2 -std=c++11 case03_heat_cpp.cpp -o case03_heat_cpp
+./case03_heat_cpp
+```
+
+C++ 版本实现了显式 FTCS 格式和隐式 Crank-Nicolson 格式的热传导求解，输出温度分布的条形图，并与解析解对比验证精度。Python 版本在 n=50 网格下约 0.1s，C++ 版本将计算时间压缩到毫秒级，让你在网格加密到 n=500 时仍能实时交互。
+
+---
+
 > [文件完，下一个: 04-case-wave.md]

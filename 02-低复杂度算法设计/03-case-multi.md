@@ -193,4 +193,18 @@ function merge(left, right):
 
 ---
 
+## C++ 版本
+
+本案例的归并排序提供 C++ 实现，位于 `code/case03_merge_cpp.cpp`。编译与运行：
+
+```bash
+cd code
+g++ -O2 -std=c++11 case03_merge_cpp.cpp -o case03_merge_cpp
+./case03_merge_cpp
+```
+
+与 Python 版本一样，它输出随机数据 vs 接近有序数据的性能对比表，并自动验证结果正确性。C++ 版本消除了 Python 递归调用的解释器开销，更接近真实工程性能。
+
+---
+
 > [文件完，下一个: 04-case-dp.md]

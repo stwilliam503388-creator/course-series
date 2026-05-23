@@ -141,6 +141,8 @@ pip install numpy scipy matplotlib
 | `appendix-c-ml-intersection.md` | 附录C：PDE 与 ML（PINN, 算子学习）的交叉点 | ~800 | - |
 | `appendix-d-reading-list.md` | 附录D：推荐阅读 | ~500 | - |
 
+> **C++ 版本**：案例1（热传导方程）提供 C++ 实现，位于 `code/` 目录下，文件名含 `_cpp` 后缀。
+
 ---
 
 > [文件完，下一个: 01-physics.md]
