@@ -124,6 +124,21 @@ make python
 make cpp
 ```
 
+### C++ 代码单独运行
+
+```bash
+# 编译
+g++ -O2 -std=c++11 -o /tmp/merge "02-低复杂度算法设计/code/case03_merge_cpp.cpp"
+
+# 运行（所有测试用例）
+/tmp/merge
+
+# 性能基准测试
+/tmp/merge benchmark
+```
+
+每个 C++ 文件都是独立的，编译后即可运行。已在本机 (macOS Apple Clang 21) 验证全部通过。
+
 ---
 
 ## 依赖关系

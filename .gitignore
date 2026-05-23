@@ -1,2 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+env/
+venv/
+.venv/
+
+# C++ binaries
+*_cpp
+!*_cpp.cpp
+
+# macOS
 .DS_Store
-*.swp
+
+# IDE
+.idea/
+.vscode/
+
+# Generated
+*.png

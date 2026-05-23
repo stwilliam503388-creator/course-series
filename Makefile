@@ -52,7 +52,8 @@ python:
 		if $(PYTHON) "$$f" > /tmp/$$(basename $$f).log 2>&1; then \
 			echo "  ✅"; \
 		else \
-			echo "  ❌ (see /tmp/$$(basename $$f).log)"; \
+			head -3 /tmp/$$(basename $$f).log; \
+			echo "  ❌"; \
 			errors=$$((errors+1)); \
 		fi; \
 		count=$$((count+1)); \
@@ -74,11 +75,12 @@ cpp:
 			if "$$bin" > /tmp/$$name-run.log 2>&1; then \
 				echo "  运行 ✅"; \
 			else \
-				echo "  运行 ❌ (see /tmp/$$name-run.log)"; \
+				echo "  运行 ❌"; \
 				errors=$$((errors+1)); \
 			fi; \
 		else \
-			echo "  编译 ❌ (see /tmp/$$name-build.log)"; \
+			cat /tmp/$$name-build.log; \
+			echo "  编译 ❌"; \
 			errors=$$((errors+1)); \
 		fi; \
 	done; \
