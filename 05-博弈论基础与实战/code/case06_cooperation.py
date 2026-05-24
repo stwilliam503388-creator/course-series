@@ -24,6 +24,10 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 
+# 中文字体配置（macOS: PingFang SC, 通用回退: SimHei）
+plt.rcParams['font.sans-serif'] = ['PingFang SC', 'SimHei', 'Noto Sans CJK SC', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
 # ──────────────────────────────────────────────────────
 # 1. 特征函数 (Characteristic Function)
 # ──────────────────────────────────────────────────────

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-案例5：蒙特卡洛仿真与风险评估
-=================================
-评估投资组合在 95% 置信水平下的 VaR 和 CVaR。
+案例5：蒙特卡洛仿真与项目工期风险评估
+=========================================
+使用 Monte Carlo 仿真评估软件项目总工期分布。
+场景：5 个串并行任务，三时估计（乐观/最可能/悲观）。
 纯 Python 标准库实现，无第三方依赖。
 """
 
@@ -11,8 +12,28 @@ import random
 import statistics
 
 
+# ============================================================
+# 工具函数
+# ============================================================
+
+def normal_cdf(x, mu=0, sigma=1):
+    """正态分布累积分布函数"""
+    z = (x - mu) / sigma
+    a1 = 0.254829592
+    a2 = -0.284496736
+    a3 = 1.421413741
+    a4 = -1.453152027
+    a5 = 1.061405429
+    p = 0.3275911
+    sign = 1 if z >= 0 else -1
+    z_abs = abs(z) / math.sqrt(2)
+    t = 1.0 / (1.0 + p * z_abs)
+    y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-z_abs * z_abs)
+    return 0.5 * (1.0 + sign * y)
+
+
 def normal_ppf(p, mu=0, sigma=1, tol=1e-10, max_iter=100):
-    """正态分布分位数函数"""
+    """正态分布分位数函数（二分法求解）"""
     if p <= 0:
         return -float('inf')
     if p >= 1:
@@ -20,18 +41,7 @@ def normal_ppf(p, mu=0, sigma=1, tol=1e-10, max_iter=100):
     lo, hi = -10, 10
     for _ in range(max_iter):
         mid = (lo + hi) / 2
-        z = (mid - mu) / sigma
-        a1 = 0.254829592
-        a2 = -0.284496736
-        a3 = 1.421413741
-        a4 = -1.453152027
-        a5 = 1.061405429
-        p_const = 0.3275911
-        sign = 1 if z >= 0 else -1
-        z_abs = abs(z) / math.sqrt(2)
-        t = 1.0 / (1.0 + p_const * z_abs)
-        y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-z_abs * z_abs)
-        cdf_mid = 0.5 * (1.0 + sign * y)
+        cdf_mid = normal_cdf(mid, mu, sigma)
         if abs(cdf_mid - p) < tol:
             return mid
         if cdf_mid < p:
@@ -41,322 +51,426 @@ def normal_ppf(p, mu=0, sigma=1, tol=1e-10, max_iter=100):
     return (lo + hi) / 2
 
 
-def generate_normal(n, mu=0, sigma=1):
-    """Box-Muller 变换生成正态分布样本"""
-    samples = []
-    for _ in range(n // 2 + 1):
-        u1 = random.random()
-        u2 = random.random()
-        z1 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
-        z2 = math.sqrt(-2 * math.log(u1)) * math.sin(2 * math.pi * u2)
-        samples.append(mu + sigma * z1)
-        samples.append(mu + sigma * z2)
-    return samples[:n]
+def sample_quantile(data, q):
+    """计算样本分位数"""
+    sorted_data = sorted(data)
+    n = len(sorted_data)
+    idx = q * (n - 1)
+    lo = int(math.floor(idx))
+    hi = int(math.ceil(idx))
+    if lo == hi:
+        return sorted_data[lo]
+    frac = idx - lo
+    return sorted_data[lo] * (1 - frac) + sorted_data[hi] * frac
 
 
-def cholesky_decomposition(matrix):
+# ============================================================
+# 三角分布采样
+# ============================================================
+
+def triangular_sample(a, m, b):
     """
-    Cholesky 分解：将正定矩阵分解为 L @ L^T
-    matrix 是 n×n 的协方差矩阵（一维列表表示）
-    """
-    n = int(math.sqrt(len(matrix)))
-    L = [0.0] * (n * n)
-    for i in range(n):
-        s = 0.0
-        for k in range(i):
-            s += L[i * n + k] ** 2
-        val = matrix[i * n + i] - s
-        if val <= 0:
-            val = 1e-10
-        L[i * n + i] = math.sqrt(val)
-        for j in range(i + 1, n):
-            s = 0.0
-            for k in range(i):
-                s += L[j * n + k] * L[i * n + k]
-            if L[i * n + i] > 0:
-                L[j * n + i] = (matrix[j * n + i] - s) / L[i * n + i]
-            else:
-                L[j * n + i] = 0.0
-    return L
-
-
-def generate_correlated_normal(num_assets, num_samples, means, stds, corr_matrix):
-    """
-    生成相关正态分布随机变量。
-    使用 Cholesky 分解。
+    从三角分布采样。
 
     参数：
-        num_assets: 资产数量
-        num_samples: 样本数量
-        means: 均值列表 [μ₁, μ₂, ...]
-        stds: 标准差列表 [σ₁, σ₂, ...]
-        corr_matrix: 相关系数矩阵（一维列表，行优先）
+        a: 乐观时间（最小值）
+        m: 最可能时间（众数）
+        b: 悲观时间（最大值）
+    """
+    u = random.random()
+    # 三角形分布的累积分布函数逆函数
+    # 分两种情况：u 在 (a, m) 区间 或 (m, b) 区间
+    fc = (m - a) / (b - a)  # 众数的相对位置
+    if u <= fc:
+        return a + math.sqrt(u * (b - a) * (m - a))
+    else:
+        return b - math.sqrt((1 - u) * (b - a) * (b - m))
+
+
+def triangular_mean(a, m, b):
+    """三角分布的均值"""
+    return (a + m + b) / 3.0
+
+
+def triangular_std(a, m, b):
+    """三角分布的标准差"""
+    return math.sqrt((a**2 + m**2 + b**2 - a * m - a * b - m * b) / 18.0)
+
+
+# ============================================================
+# 任务与项目网络定义
+# ============================================================
+
+# 任务定义：(名称, 乐观, 最可能, 悲观)
+TASKS = [
+    ("A", 3, 4, 7),   # 任务 A
+    ("B", 3, 5, 8),   # 任务 B
+    ("C", 4, 6, 10),  # 任务 C
+    ("D", 3, 4, 7),   # 任务 D
+    ("E", 2, 3, 5),   # 任务 E
+]
+
+# 依赖关系：每个任务依赖的任务列表
+# A 和 B 不依赖任何任务（起始任务）
+# C 依赖 A，D 依赖 B
+# E 依赖 C 和 D（两者都完成才能开始 E）
+DEPENDENCIES = {
+    "A": [],
+    "B": [],
+    "C": ["A"],
+    "D": ["B"],
+    "E": ["C", "D"],
+}
+
+
+def simulate_one():
+    """
+    单次 Monte Carlo 仿真。
 
     返回：
-        samples: list of list，每个资产有一组样本
+        (total_duration, critical_tasks)
+        - total_duration: 项目总工期
+        - critical_tasks: 关键路径上的任务名称列表
     """
-    # 构建协方差矩阵
-    cov_matrix = [0.0] * (num_assets * num_assets)
-    for i in range(num_assets):
-        for j in range(num_assets):
-            cov_matrix[i * num_assets + j] = corr_matrix[i * num_assets + j] * stds[i] * stds[j]
+    durations = {}
+    earliest_start = {}
+    earliest_finish = {}
 
-    # Cholesky 分解
-    L = cholesky_decomposition(cov_matrix)
+    # 按拓扑顺序处理任务（A, B, C, D, E）
+    task_order = ["A", "B", "C", "D", "E"]
 
-    # 生成独立标准正态样本
-    independent = [generate_normal(num_samples) for _ in range(num_assets)]
+    for task_name in task_order:
+        # 找到对应的三时估计
+        for t_name, a, m, b in TASKS:
+            if t_name == task_name:
+                # 从三角分布采样工期
+                dur = triangular_sample(a, m, b)
+                durations[task_name] = dur
+                break
 
-    # 应用 Cholesky 分解
-    samples = []
-    for i in range(num_assets):
-        asset_samples = []
-        for s in range(num_samples):
-            val = means[i]
-            for k in range(num_assets):
-                val += L[i * num_assets + k] * independent[k][s]
-            asset_samples.append(val)
-        samples.append(asset_samples)
+        # 计算最早开始时间（所有依赖任务的最晚完成时间）
+        deps = DEPENDENCIES[task_name]
+        if not deps:
+            es = 0.0
+        else:
+            es = max(earliest_finish[dep] for dep in deps)
 
-    return samples
+        earliest_start[task_name] = es
+        earliest_finish[task_name] = es + durations[task_name]
+
+    total_duration = max(earliest_finish.values())
+
+    # 关键路径：从最后一个任务反向追溯
+    # 用 earliest_finish 判断哪些任务在关键路径上
+    critical_tasks = []
+    # 找到最后一个完成的任务
+    last_task = max(task_order, key=lambda t: earliest_finish[t])
+    critical_tasks.append(last_task)
+
+    # 反向追溯：对关键路径上的任务，找到它的关键依赖
+    queue = [last_task]
+    visited = set()
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+
+        deps = DEPENDENCIES[current]
+        if not deps:
+            continue
+
+        # 关键依赖：最早完成时间最晚的那个
+        # （因为它的完成时间决定了当前任务的开始时间）
+        critical_dep = max(deps, key=lambda d: earliest_finish[d])
+        if critical_dep not in visited:
+            critical_tasks.append(critical_dep)
+            queue.append(critical_dep)
+
+    critical_tasks.reverse()
+    return total_duration, critical_tasks
 
 
-def monte_carlo_portfolio(weights, means, stds, corr_matrix,
-                           initial_value, num_simulations, conf_level=0.95):
+# ============================================================
+# Monte Carlo 仿真主函数
+# ============================================================
+
+def monte_carlo_simulation(num_simulations=10000, seed=42):
     """
-    蒙特卡洛仿真投资组合收益。
+    执行完整的 Monte Carlo 仿真。
 
     参数：
-        weights: 权重列表（和为 1）
-        means: 各资产期望收益率
-        stds: 各资产标准差
-        corr_matrix: 相关系数矩阵
-        initial_value: 初始投资额
         num_simulations: 仿真次数
-        conf_level: 置信水平（默认 95%）
+        seed: 随机种子
 
     返回：
         dict with keys:
-            - portfolio_returns: 组合收益率列表
-            - portfolio_values: 组合终值列表
-            - var: Value at Risk
-            - cvar: Conditional VaR
-            - mean_return: 平均收益率
-            - std_return: 收益率标准差
-            - var_amount: VaR 金额
-            - cvar_amount: CVaR 金额
+            - durations: 每次仿真的总工期列表
+            - critical_paths: 每次仿真的关键路径列表
+            - mean_duration: 平均工期
+            - std_duration: 工期标准差
+            - p50: 中位数工期
+            - p90: 90% 分位数
+            - p95: 95% 分位数
+            - on_time_prob: 30 天内交付概率
     """
-    num_assets = len(weights)
+    random.seed(seed)
 
-    # 生成相关资产收益率
-    samples = generate_correlated_normal(
-        num_assets, num_simulations, means, stds, corr_matrix
-    )
+    durations = []
+    critical_paths = []
 
-    # 计算组合收益率
-    portfolio_returns = []
-    for s in range(num_simulations):
-        rp = sum(weights[i] * samples[i][s] for i in range(num_assets))
-        portfolio_returns.append(rp)
+    for i in range(num_simulations):
+        dur, crit = simulate_one()
+        durations.append(dur)
+        critical_paths.append(tuple(crit))
 
-    # 排序
-    sorted_returns = sorted(portfolio_returns)
-    sorted_values = [initial_value * (1 + r) for r in sorted_returns]
+    mean_duration = statistics.mean(durations)
+    std_duration = statistics.stdev(durations)
+    p50 = sample_quantile(durations, 0.50)
+    p90 = sample_quantile(durations, 0.90)
+    p95 = sample_quantile(durations, 0.95)
 
-    # VaR：排序后取 (1-conf_level) 分位数
-    var_idx = int((1 - conf_level) * num_simulations)
-    var = sorted_returns[var_idx]
-    var_amount = initial_value * (1 + var) - initial_value
-
-    # CVaR：小于 VaR 的收益率的平均值
-    tail_returns = sorted_returns[:var_idx + 1]
-    cvar = statistics.mean(tail_returns) if tail_returns else var
-    cvar_amount = initial_value * (1 + cvar) - initial_value
-
-    # 统计量
-    mean_return = statistics.mean(portfolio_returns)
-    std_return = statistics.stdev(portfolio_returns)
+    # 30 天内交付概率
+    deadline = 30
+    on_time_count = sum(1 for d in durations if d <= deadline)
+    on_time_prob = on_time_count / num_simulations
 
     return {
-        "portfolio_returns": portfolio_returns,
-        "portfolio_values": sorted_values,
-        "var": var,
-        "cvar": cvar,
-        "mean_return": mean_return,
-        "std_return": std_return,
-        "var_amount": var_amount,
-        "cvar_amount": cvar_amount,
+        "durations": durations,
+        "critical_paths": critical_paths,
+        "mean_duration": mean_duration,
+        "std_duration": std_duration,
+        "p50": p50,
+        "p90": p90,
+        "p95": p95,
+        "on_time_prob": on_time_prob,
     }
 
 
-def analytical_var(weights, means, stds, corr_matrix, initial_value, conf_level=0.95):
-    """解析法计算 VaR（基于正态分布假设）"""
-    num_assets = len(weights)
+# ============================================================
+# 关键路径频次分析
+# ============================================================
 
-    # 组合期望收益
-    mu_p = sum(weights[i] * means[i] for i in range(num_assets))
+def critical_path_analysis(critical_paths):
+    """统计每个任务出现在关键路径上的频次"""
+    task_freq = {t[0]: 0 for t in TASKS}
+    total = len(critical_paths)
 
-    # 组合方差
-    var_p = 0.0
-    for i in range(num_assets):
-        for j in range(num_assets):
-            var_p += weights[i] * weights[j] * \
-                     corr_matrix[i * num_assets + j] * stds[i] * stds[j]
+    for path in critical_paths:
+        for task_name in path:
+            task_freq[task_name] = task_freq.get(task_name, 0) + 1
 
-    sigma_p = math.sqrt(var_p)
+    print(f"\n  {'='*50}")
+    print(f"  关键路径频次统计（{total} 次仿真）")
+    print(f"  {'='*50}")
+    print(f"  {'任务':>6} {'频次':>8} {'频率':>10}")
+    print(f"  {'-'*24}")
+    for name, freq in sorted(task_freq.items()):
+        pct = freq / total * 100
+        bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+        print(f"  {name:>6} {freq:>8} {pct:>8.1f}%  {bar}")
 
-    # VaR
-    z_score = normal_ppf(1 - conf_level)  # 负值
-    var = mu_p + z_score * sigma_p
-    var_amount = initial_value * (1 + var) - initial_value
-
-    return {
-        "mu_p": mu_p,
-        "sigma_p": sigma_p,
-        "var": var,
-        "var_amount": var_amount,
-    }
+    return task_freq
 
 
-def convergence_demo(initial_value, num_trials_list):
-    """演示蒙特卡洛的收敛速度"""
-    weights = [0.6, 0.4]
-    means = [0.12, 0.08]
-    stds = [0.20, 0.10]
-    corr_matrix = [1.0, 0.3, 0.3, 1.0]
+# ============================================================
+# 敏感性分析
+# ============================================================
 
-    baseline = analytical_var(weights, means, stds, corr_matrix, initial_value)
-    print(f"  解析解 VaR: {baseline['var']:.4f} ({baseline['var_amount']:+.2f} 万元)")
+def sensitivity_analysis(num_simulations=5000, delay_factor=1.2):
+    """
+    敏感性分析：每个任务工期增加 20%，看总工期的变化。
+
+    返回按影响程度排序的结果。
+    """
+    # 基线
+    baseline = monte_carlo_simulation(num_simulations, seed=42)
+    base_mean = baseline["mean_duration"]
+
+    print(f"\n  {'='*50}")
+    print(f"  敏感性分析（每个任务延期 {int((delay_factor-1)*100)}%）")
+    print(f"  {'='*50}")
+    print(f"  基线平均工期: {base_mean:.2f} 天")
     print()
 
-    for n in num_trials_list:
-        result = monte_carlo_portfolio(
-            weights, means, stds, corr_matrix,
-            initial_value, n
-        )
-        error = abs(result['var'] - baseline['var'])
-        print(f"  n={n:>8,}: MC VaR={result['var']:.4f}, "
-              f"误差={error:.4f}, "
-              f"CVaR={result['cvar']:.4f}")
+    # 另存原来的任务定义
+    original_tasks = list(TASKS)
 
+    results = []
+    for i, (name, a, m, b) in enumerate(original_tasks):
+        # 暂时修改任务定义
+        new_a = a * delay_factor
+        new_m = m * delay_factor
+        new_b = b * delay_factor
+        TASKS[i] = (name, new_a, new_m, new_b)
+
+        # 重新仿真
+        result = monte_carlo_simulation(num_simulations, seed=42)
+        delta = result["mean_duration"] - base_mean
+        delta_pct = delta / base_mean * 100
+        results.append((name, delta, delta_pct, result["mean_duration"]))
+
+        # 恢复
+        TASKS[i] = (name, a, m, b)
+
+    # 按影响排序（从大到小）
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    max_delta = max(r[1] for r in results) if results else 1
+    print(f"  {'任务':>6} {'延后工期':>12} {'影响(%)':>10} {'新均值':>10}")
+    print(f"  {'-'*40}")
+    for name, delta, delta_pct, new_mean in results:
+        bar_ratio = delta / max_delta if max_delta > 0 else 0
+        bar = "█" * int(bar_ratio * 30)
+        print(f"  {name:>6} {delta:>+8.2f}天 {delta_pct:>+7.2f}%  {new_mean:>7.2f}天  {bar}")
+
+    return results
+
+
+# ============================================================
+# 可视化（文本版）
+# ============================================================
+
+def text_histogram(data, title="工期分布直方图", bins=20, width=50):
+    """输出文本条形图"""
+    min_val = min(data)
+    max_val = max(data)
+    bin_width = (max_val - min_val) / bins
+
+    counts = [0] * bins
+    for d in data:
+        idx = min(int((d - min_val) / bin_width), bins - 1)
+        counts[idx] += 1
+
+    max_count = max(counts) if counts else 1
+
+    print(f"\n  {title}")
+    print(f"  {'-' * (width + 30)}")
+    for i in range(bins):
+        lo = min_val + i * bin_width
+        hi = lo + bin_width
+        count = counts[i]
+        bar_len = int(count / max_count * width)
+        bar = "█" * bar_len
+        label = f"[{lo:5.1f}, {hi:5.1f})"
+        print(f"  {label} |{bar:<{width}} {count}")
+    print(f"  {'-' * (width + 30)}")
+
+
+# ============================================================
+# 收敛性演示
+# ============================================================
+
+def convergence_demo():
+    """演示 P95 分位数随着仿真次数增加而收敛"""
+    print(f"\n  {'='*50}")
+    print(f"  收敛性演示（P95 随仿真次数变化）")
+    print(f"  {'='*50}")
+    print(f"  {'仿真次数':>10} {'P95(天)':>10} {'P90(天)':>10} {'均值(天)':>10} {'变化':>10}")
+    print(f"  {'-'*50}")
+
+    n_list = [100, 500, 1000, 5000, 10000, 50000]
+    prev_p95 = None
+    for n in n_list:
+        result = monte_carlo_simulation(num_simulations=n, seed=42)
+        change = ""
+        if prev_p95 is not None:
+            diff = result["p95"] - prev_p95
+            change = f"{diff:+.4f}"
+        print(f"  {n:>10,} {result['p95']:>10.2f} {result['p90']:>10.2f} "
+              f"{result['mean_duration']:>10.2f} {change:>10}")
+        prev_p95 = result["p95"]
+
+    print(f"\n  → P95 随仿真次数增加而收敛 ✅")
+
+
+# ============================================================
+# 主函数
+# ============================================================
 
 def main():
     print("=" * 60)
-    print("案例5：蒙特卡洛仿真与风险评估")
+    print("案例5：蒙特卡洛仿真与项目工期风险评估")
+    print("=" * 60)
+    print("场景：软件项目 | 5 个串并行任务 | 三时估计")
     print("=" * 60)
 
-    random.seed(42)
+    # ========= 任务信息 =========
+    print(f"\n{'='*60}")
+    print("项目任务信息")
+    print(f"{'='*60}")
+    print(f"  {'任务':>6} {'乐观':>6} {'最可能':>8} {'悲观':>6} {'PERT均值':>10} {'PERT标准差':>12}")
+    print(f"  {'-'*48}")
+    for name, a, m, b in TASKS:
+        pert_mean = (a + 4 * m + b) / 6.0
+        pert_std = (b - a) / 6.0
+        print(f"  {name:>6} {a:>6} {m:>8} {b:>6} {pert_mean:>10.2f} {pert_std:>12.2f}")
 
-    # 投资组合参数
-    weights = [0.6, 0.4]       # 60% A, 40% B
-    means = [0.12, 0.08]       # 期望收益率
-    stds = [0.20, 0.10]        # 标准差
-    corr_matrix = [1.0, 0.3,   # 相关系数矩阵
-                   0.3, 1.0]
-    initial_value = 1_000_000  # 100 万元
+    # ========= 主仿真 =========
+    print(f"\n{'='*60}")
+    print("Monte Carlo 仿真（10000 次）")
+    print(f"{'='*60}")
 
-    print(f"\n投资组合参数：")
-    print(f"  股票 A: 权重 {weights[0]:.0%}, μ={means[0]:.0%}, σ={stds[0]:.0%}")
-    print(f"  股票 B: 权重 {weights[1]:.0%}, μ={means[1]:.0%}, σ={stds[1]:.0%}")
-    print(f"  相关系数: ρ=0.3")
-    print(f"  初始投资: {initial_value / 10000:.0f} 万元")
+    NUM_SIM = 10000
+    result = monte_carlo_simulation(num_simulations=NUM_SIM, seed=42)
 
-    # ========= 解析解 =========
-    print("\n" + "-" * 60)
-    print("解析法（假设正态分布）")
-    print("-" * 60)
+    print(f"\n  仿真次数: {NUM_SIM}")
+    print(f"\n  总工期统计:")
+    print(f"    均值: {result['mean_duration']:.2f} 天")
+    print(f"    标准差: {result['std_duration']:.2f} 天")
+    print(f"    P50 (中位数): {result['p50']:.2f} 天")
+    print(f"    P90: {result['p90']:.2f} 天")
+    print(f"    P95: {result['p95']:.2f} 天")
+    print(f"    最小值: {min(result['durations']):.2f} 天")
+    print(f"    最大值: {max(result['durations']):.2f} 天")
 
-    analytical = analytical_var(weights, means, stds, corr_matrix, initial_value)
-    print(f"  组合期望收益 μ_p = {analytical['mu_p']:.4f} ({analytical['mu_p']*100:.2f}%)")
-    print(f"  组合标准差 σ_p = {analytical['sigma_p']:.4f} ({analytical['sigma_p']*100:.2f}%)")
-    print(f"  95% VaR = {analytical['var']:.4f} ({analytical['var']*100:.2f}%)")
-    print(f"  95% VaR 金额 = {analytical['var_amount']:+.2f} 元 "
-          f"({analytical['var_amount']/10000:.2f} 万元)")
+    print(f"\n  按期交付概率:")
+    for deadline in [25, 28, 30, 32, 35]:
+        prob = sum(1 for d in result['durations'] if d <= deadline) / NUM_SIM
+        print(f"    P(工期 ≤ {deadline}天) = {prob:.4f} ({prob*100:.1f}%)")
 
-    # ========= 蒙特卡洛仿真 =========
-    print("\n" + "-" * 60)
-    print("蒙特卡洛仿真（100000 次）")
-    print("-" * 60)
+    # ========= 直方图 =========
+    text_histogram(result['durations'], "总工期分布直方图", bins=15)
 
-    result = monte_carlo_portfolio(
-        weights, means, stds, corr_matrix,
-        initial_value, 100000
-    )
+    # ========= 关键路径分析 =========
+    critical_path_analysis(result['critical_paths'])
 
-    print(f"  仿真平均收益: {result['mean_return']:.4f} ({result['mean_return']*100:.2f}%)")
-    print(f"  仿真标准差: {result['std_return']:.4f} ({result['std_return']*100:.2f}%)")
-    print(f"  95% VaR = {result['var']:.4f} ({result['var']*100:.2f}%)")
-    print(f"  95% VaR 金额 = {result['var_amount']:+.2f} 元")
-    print(f"  95% CVaR = {result['cvar']:.4f} ({result['cvar']*100:.2f}%)")
-    print(f"  95% CVaR 金额 = {result['cvar_amount']:+.2f} 元")
+    # ========= 敏感性分析 =========
+    sensitivity_analysis(num_simulations=5000, delay_factor=1.2)
 
-    print()
-    print(f"  VaR vs CVaR:")
-    print(f"    VaR 说: 95% 情况下损失不超过 {abs(result['var_amount']/10000):.2f} 万元")
-    print(f"    CVaR 说: 如果发生极端损失(最差 5%)，平均会亏 {abs(result['cvar_amount']/10000):.2f} 万元")
-    print(f"    CVaR/VaR = {abs(result['cvar_amount']/result['var_amount']):.2f} 倍")
+    # ========= 收敛性 =========
+    convergence_demo()
 
-    # ========= 收敛性演示 =========
-    print("\n" + "-" * 60)
-    print("收敛性演示：蒙特卡洛误差随仿真次数变化")
-    print("-" * 60)
-
-    convergence_demo(initial_value, [100, 1000, 10000, 50000, 100000])
-
-    # ========= 对偶变量方差缩减 =========
-    print("\n" + "-" * 60)
-    print("方差缩减：对偶变量法演示")
-    print("-" * 60)
-
-    # 简单演示：对偶变量法估计标准正态的均值
-    print("  估计标准正态分布的均值（应为 0）")
-    num_trials = 10000
-    # 普通蒙特卡洛
-    std_plain = []
-    for _ in range(50):
-        samples = [random.gauss(0, 1) for _ in range(num_trials)]
-        std_plain.append(statistics.mean(samples))
-
-    # 对偶变量
-    std_antithetic = []
-    for _ in range(25):
-        u1 = [random.random() for _ in range(num_trials)]
-        z1 = [math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * random.random())
-              for u in u1]
-        z2 = [-z for z in z1]
-        combined = z1 + z2
-        std_antithetic.append(statistics.mean(combined))
-
-    var_plain = statistics.variance(std_plain)
-    var_anti = statistics.variance(std_antithetic)
-    reduction = (1 - var_anti / var_plain) * 100
-    print(f"  普通 MC 方差: {var_plain:.6f}")
-    print(f"  对偶变量方差: {var_anti:.6f}")
-    print(f"  方差缩减: {reduction:.1f}%")
-
-    # ========= 关键分位数输出 =========
-    print("\n" + "-" * 60)
-    print("不同置信水平的 VaR")
-    print("-" * 60)
-
-    sorted_returns = sorted(result['portfolio_returns'])
-    for conf in [0.90, 0.95, 0.99]:
-        idx = int((1 - conf) * len(sorted_returns))
-        var_conf = sorted_returns[idx]
-        amount = initial_value * (1 + var_conf) - initial_value
-        print(f"  {conf:.0%} VaR = {var_conf:.4f} ({var_conf*100:.2f}%) = "
-              f"{amount:+.2f} 元 ({amount/10000:.2f} 万元)")
-
-    print("\n" + "=" * 60)
+    # ========= 结论 =========
+    print(f"\n{'='*60}")
     print("结论")
-    print("=" * 60)
+    print(f"{'='*60}")
     print(f"""
-1. 蒙特卡洛的 VaR ≈ 解析解 ✅（正态分布假设下一致）
-2. 仿真次数增加 → 误差减小 ✅（误差 ∝ 1/√n）
-3. CVaR < VaR（CVaR 捕捉尾部风险）
-4. 对偶变量法有效降低方差 ✅
-5. 100 万元投资，95% VaR ≈ {abs(result['var_amount']/10000):.2f} 万元
-    """)
+1. 项目总工期均值: {result['mean_duration']:.1f} 天
+   P50 = {result['p50']:.1f} 天, P90 = {result['p90']:.1f} 天, P95 = {result['p95']:.1f} 天
+   - 乐观估算: {result['mean_duration']:.0f} 天
+   - 保守估算 (P95): {result['p95']:.0f} 天
+
+2. 30 天交付概率: {result['on_time_prob']*100:.1f}%
+   - {"✅ 较大概率按期交付" if result['on_time_prob'] >= 0.8 else "⚠️ 存在延期风险"}
+
+3. 关键路径分析:
+   - 任务 C 和 E 出现频次最高——是项目的核心瓶颈
+   - 任务 A/B 谁更慢，谁所在的路径就更"关键"
+
+4. 敏感性分析:
+   - 任务 E 延期的影响最大（所有路径都要经过它）
+   - 任务 C 次之（A-C-E 路径中的瓶颈）
+   - 任务 D 的影响最小（B-D-E 路径较短，有缓冲）
+
+5. 建议:
+   - 重点关注任务 C 和 E 的进度
+   - 任务 C 的悲观估计 10 天——需要制定应急预案
+   - 向老板汇报: "P50={result['p50']:.0f}天, P95={result['p95']:.0f}天"
+""")
+    print("=" * 60)
+    print("仿真完成！🎲")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

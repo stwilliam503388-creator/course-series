@@ -11,6 +11,11 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+
+# 中文字体配置（macOS: PingFang SC, 通用回退: SimHei）
+plt.rcParams['font.sans-serif'] = ['PingFang SC', 'SimHei', 'Noto Sans CJK SC', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
 from scipy.sparse import lil_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve
 

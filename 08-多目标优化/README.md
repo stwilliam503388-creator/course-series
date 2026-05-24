@@ -136,6 +136,8 @@
 - **单目标优化基础**：知道什么是决策变量、约束、目标函数（推荐先读运筹学基础课程）
 - **了解一点点进化算法**：知道遗传算法的选择/交叉/变异（不是必须，案例5会带过）
 
+> 📋 **前置课程**：建议先完成 [01-概率论基础](../01-概率论与数理统计/) 和 [04-运筹学基础](../04-运筹学基础与实战/02-model-method.md)（单目标优化基础）。
+
 ---
 
 ## 与已有课程的关系
@@ -154,20 +156,20 @@
 |------|------|------|
 | `01-multiobj-bg.md` | 多目标优化概览：历史、核心矛盾、三种处理策略、建模心法 | ~5,000 |
 | `02-methods.md` | 核心方法：帕累托支配、加权求和、ε-约束、目标规划、NSGA-II、性能指标 | ~6,000 |
-| `03-case-portfolio-multi.md` | 案例1：投资组合双目标优化 ★★☆☆☆ | ~3,000 |
+| `03-case-portfolio-multi.md` | 案例1：共享单车调度多目标优化 ★★☆☆☆ | ~3,000 |
 | `04-case-product-design.md` | 案例2：产品设计权衡 ★★★☆☆ | ~3,000 |
 | `05-case-scheduling-multi.md` | 案例3：生产调度多目标 ★★★☆☆ | ~3,000 |
-| `06-case-supply-chain-multi.md` | 案例4：供应链多目标 ★★★★☆ | ~3,000 |
+| `06-case-supply-chain-multi.md` | 案例4：可再生能源电网多目标调度 ★★★★☆ | ~3,000 |
 | `07-case-nsga2.md` | 案例5：NSGA-II 实战 ★★★★☆ [进阶] | ~3,000 |
 | `08-capstone.md` | 🏆 综合毕业项目 | ~2,000 |
 | `appendix-a-when-not-multiobj.md` | 附录A：什么时候不需要多目标优化 | ~800 |
 | `appendix-b-common-pitfalls.md` | 附录B：TOP 5 必踩坑 | ~800 |
 | `appendix-c-ml-intersection.md` | 附录C：多目标优化 × ML 的交叉点 | ~800 |
 | `appendix-d-reading-list.md` | 附录D：推荐阅读 | ~500 |
-| `code/case3_portfolio.py` | 案例1代码：投资组合双目标优化 | — |
-| `code/case4_product_design.py` | 案例2代码：产品设计权衡 | — |
-| `code/case5_scheduling.py` | 案例3代码：生产调度多目标 | — |
-| `code/case6_supplychain.py` | 案例4代码：供应链多目标 | — |
+| `code/case03_portfolio_multi.py` | 案例1代码：共享单车调度多目标 | — |
+| `code/case04_product_design.py` | 案例2代码：产品设计权衡 | — |
+| `code/case05_scheduling.py` | 案例3代码：生产调度多目标 | — |
+| `code/case06_supply_chain_multi.py` | 案例4代码：可再生能源电网多目标 | — |
 | `code/case7_nsga2.py` | 案例5代码：从零实现 NSGA-II | — |
 | `code/capstone_logistics.py` | 毕业项目：城市物流多目标优化 | — |
 

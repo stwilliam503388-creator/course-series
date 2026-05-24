@@ -1,0 +1,18 @@
+# course-series 依赖
+# 安装：pip install -r requirements.txt
+#
+# 各课程依赖情况：
+#   01-概率论     : 仅标准库
+#   02-算法       : 仅标准库
+#   03-PDE        : numpy, matplotlib, scipy
+#   04-运筹学     : numpy, matplotlib, pyomo, simpy
+#   05-博弈论     : numpy, matplotlib
+#   06-供应链     : 仅标准库
+#   07-随机规划   : numpy, matplotlib, scipy
+#   08-多目标     : numpy, matplotlib, scipy
+
+numpy>=1.20.0
+matplotlib>=3.3.0
+scipy>=1.7.0
+pyomo>=6.0
+simpy>=4.0

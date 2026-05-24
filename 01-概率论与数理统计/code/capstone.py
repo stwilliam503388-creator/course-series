@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-🏆 毕业项目：库存决策的完整概率分析
+🏆 毕业项目：质量管控的完整统计分析
 ========================================
-将本课程所有技能（分布识别、CLT、贝叶斯、假设检验、蒙特卡洛）
-串联起来解决一个真实的供应链决策问题。
+将本课程所有技能（分布拟合、置信区间、假设检验、贝叶斯更新）
+串联起来解决一个真实的电子制造质量控制问题。
 
-纯 Python 标准库实现，无第三方依赖。
+场景：电阻生产——标称值 100Ω，公差 ±5%（95Ω~105Ω）。
+使用纯 Python 标准库实现，无第三方依赖。
 """
 
 import math
@@ -40,7 +41,7 @@ def normal_cdf(x, mu=0, sigma=1):
 
 
 def normal_ppf(p, mu=0, sigma=1, tol=1e-10, max_iter=100):
-    """正态分布分位数函数"""
+    """正态分布分位数函数（二分法求解）"""
     if p <= 0:
         return -float('inf')
     if p >= 1:
@@ -84,65 +85,93 @@ def sample_quantile(data, q):
     return sorted_data[lo] * (1 - frac) + sorted_data[hi] * frac
 
 
+def chi2_ppf(p, df, tol=1e-10, max_iter=1000):
+    """卡方分布分位数（使用 Wilson-Hilferty 近似作为初值 + 二分法）"""
+    if p <= 0:
+        return 0.0
+    if p >= 1:
+        return float('inf')
+
+    # Wilson-Hilferty 近似
+    z = normal_ppf(p)
+    approx = df * (1 - 2.0 / (9 * df) + z * math.sqrt(2.0 / (9 * df))) ** 3
+    if approx <= 0:
+        approx = df * 0.5
+
+    # 二分法精化
+    lo = max(approx * 0.1, 1e-10)
+    hi = max(approx * 10, df * 3)
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2
+        # 卡方 CDF（用正则化不完全伽马函数的近似）
+        # 对于大 df，卡方分布近似正态
+        if df > 30:
+            z_mid = (mid - df) / math.sqrt(2 * df)
+            cdf_mid = normal_cdf(z_mid)
+        else:
+            # 简化：对小 df 也用正态近似（实际应用应查表）
+            z_mid = (mid - df) / math.sqrt(2 * df)
+            cdf_mid = normal_cdf(z_mid)
+        if abs(cdf_mid - p) < tol:
+            return mid
+        if cdf_mid < p:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
 # ============================================================
-# 第1步：生成模拟数据
+# 第1步：生成模拟阻值数据
 # ============================================================
 
-def generate_demand_data(n_days=500, true_mu=200, true_sigma=40):
+def generate_resistance_data(n=1000, target=100.0, process_sigma=1.8, shift=0.5):
     """
-    生成模拟的日需求数据。
-    真实需求服从对数正态分布 lnN(log(200), 0.2)。
-    这样数据是正数、右偏、类似真实需求。
+    生成模拟电阻阻值数据。
+
+    真实工艺可能有微小偏移（shift>0 表示工艺均值偏高）。
+    process_sigma 控制过程标准差（工艺精度）。
     """
-    log_mu = math.log(true_mu)
-    log_sigma = true_sigma / true_mu  # 变异系数 ~0.2
-    log_data = generate_normal(n_days, log_mu, log_sigma)
-    demand = [math.exp(x) for x in log_data]
-    return demand, true_mu, true_sigma
-
-
-def generate_leadtime_data(n_samples=30, supplier='A'):
-    """生成供应商补货时间数据"""
-    random.seed(42 + hash(supplier) % 1000)
-    if supplier == 'A':
-        # 供应商 A：均值 5 天，标准差 1 天
-        return [max(1, random.gauss(5, 1)) for _ in range(n_samples)]
-    else:
-        # 供应商 B：均值 6 天，标准差 1.5 天
-        return [max(1, random.gauss(6, 1.5)) for _ in range(n_samples)]
+    true_mu = target + shift
+    data = generate_normal(n, true_mu, process_sigma)
+    return data, true_mu, process_sigma
 
 
 # ============================================================
-# 第2步：问题1 — 需求分布识别
+# 第2步：任务1 — 分布拟合
 # ============================================================
 
-def qq_correlation(data, theoretical_ppf):
-    """计算数据与理论分布的 QQ 相关性"""
+def qq_correlation(data):
+    """计算数据与正态分布的 QQ 相关性"""
     n = len(data)
     sorted_data = sorted(data)
-    x_vals = []
-    y_vals = []
     data_mean = statistics.mean(sorted_data)
     data_std = statistics.stdev(sorted_data)
     if data_std == 0:
         return 0
+
+    theoretical = []
     for i in range(1, n):
         p = i / (n + 1)
-        x_vals.append(theoretical_ppf(p))
-        y_vals.append((sorted_data[i - 1] - data_mean) / data_std)
-    mean_x = statistics.mean(x_vals)
-    mean_y = statistics.mean(y_vals)
-    n_pts = len(x_vals)
-    cov = sum((x_vals[i] - mean_x) * (y_vals[i] - mean_y) for i in range(n_pts))
-    std_x = math.sqrt(sum((x - mean_x) ** 2 for x in x_vals))
-    std_y = math.sqrt(sum((y - mean_y) ** 2 for y in y_vals))
+        theoretical.append(normal_ppf(p))
+
+    standardized = [(x - data_mean) / data_std for x in sorted_data[:-1]]
+
+    n_pts = len(theoretical)
+    mean_x = statistics.mean(theoretical)
+    mean_y = statistics.mean(standardized)
+
+    cov = sum((theoretical[i] - mean_x) * (standardized[i] - mean_y) for i in range(n_pts))
+    std_x = math.sqrt(sum((x - mean_x) ** 2 for x in theoretical))
+    std_y = math.sqrt(sum((y - mean_y) ** 2 for y in standardized))
+
     if std_x * std_y == 0:
         return 0
     return cov / (std_x * std_y)
 
 
-def assess_distribution(data):
-    """评估数据最可能服从的分布"""
+def assess_distribution(data, target=100.0, usl=105.0, lsl=95.0):
+    """评估阻值数据的分布特征"""
     n = len(data)
     mean_d = statistics.mean(data)
     std_d = statistics.stdev(data)
@@ -150,115 +179,177 @@ def assess_distribution(data):
     max_d = max(data)
 
     print(f"\n  {'='*50}")
-    print(f"  基本统计量")
+    print(f"  【任务1】分布拟合 —— 阻值分布分析")
     print(f"  {'='*50}")
-    print(f"  样本量: {n}")
-    print(f"  均值: {mean_d:.2f}")
-    print(f"  标准差: {std_d:.2f}")
-    print(f"  最小值: {min_d:.2f}")
-    print(f"  最大值: {max_d:.2f}")
-    print(f"  变异系数 (CV): {std_d/mean_d:.4f}")
+    print(f"  基本统计量:")
+    print(f"    样本量: {n}")
+    print(f"    均值: {mean_d:.4f} Ω")
+    print(f"    标准差: {std_d:.4f} Ω")
+    print(f"    最小值: {min_d:.4f} Ω")
+    print(f"    最大值: {max_d:.4f} Ω")
+    print(f"    目标值: {target} Ω")
+    print(f"    规格上限 (USL): {usl} Ω")
+    print(f"    规格下限 (LSL): {lsl} Ω")
 
     # 偏度
     m3 = sum((x - mean_d) ** 3 for x in data) / n
     skewness = m3 / (std_d ** 3) if std_d > 0 else 0
-    print(f"  偏度: {skewness:.4f}")
+    # 峰度
+    m4 = sum((x - mean_d) ** 4 for x in data) / n
+    kurtosis = m4 / (std_d ** 4) if std_d > 0 else 0
+    print(f"    偏度: {skewness:.4f} (正态 ≈ 0)")
+    print(f"    峰度: {kurtosis:.4f} (正态 ≈ 3)")
 
-    # 正态 QQ 相关性
-    r_normal = qq_correlation(data, lambda p: normal_ppf(p))
-    print(f"\n  正态分布 QQ 相关性: {r_normal:.4f}")
+    # QQ 相关性
+    r_normal = qq_correlation(data)
+    print(f"\n  正态 QQ 相关性: {r_normal:.4f}")
     if r_normal > 0.98:
-        print(f"  ✅ 数据近似正态分布")
+        print(f"  ✅ 数据近似正态分布（QQ 相关性 > 0.98）")
+    elif r_normal > 0.95:
+        print(f"  ⚠️ 数据大致接近正态分布（QQ 相关性 > 0.95）")
     else:
-        print(f"  ⚠️ 数据偏离正态分布")
+        print(f"  ❌ 数据偏离正态分布（QQ 相关性 < 0.95）")
 
-    # 对数正态：对 log 数据做正态 QQ
-    log_data = [math.log(x) for x in data if x > 0]
-    if log_data:
-        log_mean = statistics.mean(log_data)
-        log_std = statistics.stdev(log_data)
-        r_lognormal = qq_correlation(log_data, lambda p: normal_ppf(p))
-        print(f"\n  对数正态（取 log 后）QQ 相关性: {r_lognormal:.4f}")
-        if r_lognormal > 0.98:
-            print(f"  ✅ 数据近似对数正态分布")
-            print(f"  log 变换后的均值: {log_mean:.4f}")
-            print(f"  log 变换后的标准差: {log_std:.4f}")
-            print(f"  原始尺度均值 ≈ {math.exp(log_mean + log_std**2/2):.2f}")
-            print(f"  原始尺度中位数 ≈ {math.exp(log_mean):.2f}")
-        else:
-            print(f"  ⚠️ 数据也不完全符合对数正态")
-    else:
-        r_lognormal = -1
+    # 不合格率
+    defect_rate = sum(1 for x in data if x < lsl or x > usl) / n
+    print(f"\n  样本不合格率: {defect_rate:.4f} ({defect_rate*100:.2f}%)")
 
-    # 判断
-    if r_lognormal > r_normal and r_lognormal > 0.96:
-        print(f"\n  🏆 结论：数据最可能服从**对数正态分布**")
-        print(f"    参数: μ_log={log_mean:.4f}, σ_log={log_std:.4f}")
-        return "lognormal", log_mean, log_std
-    elif r_normal > 0.96:
-        print(f"\n  🏆 结论：数据最可能服从**正态分布**")
-        print(f"    参数: μ={mean_d:.4f}, σ={std_d:.4f}")
-        return "normal", mean_d, std_d
-    else:
-        print(f"\n  🏆 结论：数据不符合常见分布，使用经验分布")
-        return "empirical", mean_d, std_d
+    return mean_d, std_d
 
 
 # ============================================================
-# 第3步：问题2 — CLT 估计月总需求
+# 第3步：任务2 — 假设检验（工艺是否偏移）
 # ============================================================
 
-def clt_monthly_analysis(dist_type, param1, param2, days_per_month=30):
-    """用 CLT 估计月总需求的分布"""
+def one_sample_t_test(data, mu0=100.0, alpha=0.05):
+    """单样本 t 检验：H₀: μ = μ0"""
+    n = len(data)
+    mean_d = statistics.mean(data)
+    std_d = statistics.stdev(data)
+    se = std_d / math.sqrt(n)
+
+    t_stat = (mean_d - mu0) / se if se > 0 else 0
+
+    # 用正态近似（n=1000 足够大）
+    p_value_two_sided = 2 * (1 - normal_cdf(abs(t_stat)))
+
     print(f"\n  {'='*50}")
-    print(f"  月总需求分析（CLT）")
+    print(f"  【任务2】假设检验 —— 工艺均值是否偏移？")
     print(f"  {'='*50}")
+    print(f"  H₀: μ = {mu0} Ω（工艺正常）")
+    print(f"  H₁: μ ≠ {mu0} Ω（工艺偏移）")
+    print(f"  α = {alpha}")
+    print(f"\n  检验统计量:")
+    print(f"    样本均值: {mean_d:.4f} Ω")
+    print(f"    样本标准差: {std_d:.4f} Ω")
+    print(f"    标准误: {se:.4f} Ω")
+    print(f"    t 统计量: {t_stat:.4f}")
+    print(f"    p 值 (双侧): {p_value_two_sided:.6f}")
 
-    if dist_type == "normal":
-        daily_mean = param1
-        daily_std = param2
-    elif dist_type == "lognormal":
-        # 对数正态的原始尺度均值
-        daily_mean = math.exp(param1 + param2**2 / 2)
-        # 原始尺度方差
-        daily_var = (math.exp(param2**2) - 1) * math.exp(2 * param1 + param2**2)
-        daily_std = math.sqrt(daily_var)
+    if p_value_two_sided < alpha:
+        print(f"\n  ✅ p = {p_value_two_sided:.6f} < α = {alpha}")
+        print(f"  → 拒绝 H₀：工艺均值显著偏离 {mu0} Ω")
+        print(f"  → 偏移量: {mean_d - mu0:.4f} Ω")
     else:
-        daily_mean = param1
-        daily_std = param2
+        print(f"\n  ⚠️ p = {p_value_two_sided:.6f} >= α = {alpha}")
+        print(f"  → 不能拒绝 H₀：没有足够证据表明工艺偏移")
 
-    monthly_mean = days_per_month * daily_mean
-    monthly_std = math.sqrt(days_per_month) * daily_std
-
-    print(f"  日需求均值: {daily_mean:.2f}")
-    print(f"  日需求标准差: {daily_std:.2f}")
-    print(f"  月需求均值 (CLT): {monthly_mean:.2f}")
-    print(f"  月需求标准差 (CLT): {monthly_std:.2f}")
-    print(f"  月需求近似服从: N({monthly_mean:.0f}, {monthly_std:.0f}²)")
-    print(f"  CLT 要求: n={days_per_month} >= 30 ✅（经验法则满足）")
-
-    # 安全库存计算（基于月需求）
-    z_95 = normal_ppf(0.95)  # 95% 服务水平
-    safety_stock = z_95 * monthly_std
-    reorder_point = monthly_mean + safety_stock
-
-    print(f"\n  95% 服务水平的安全库存: {safety_stock:.0f}")
-    print(f"  再订货点（月）: {reorder_point:.0f}")
-
-    return monthly_mean, monthly_std
+    return t_stat, p_value_two_sided, mean_d - mu0
 
 
 # ============================================================
-# 第4步：问题3 — 贝叶斯需求参数更新
+# 第4步：任务3 — 过程能力指数 Cp/Cpk
 # ============================================================
 
-def bayesian_demand_update(prior_mean, prior_std, prior_n,
-                            sample_mean, sample_std, sample_n):
+def process_capability(data, target=100.0, usl=105.0, lsl=95.0, conf_level=0.95):
+    """计算过程能力指数 Cp、Cpk 及其置信区间"""
+    n = len(data)
+    mean_d = statistics.mean(data)
+    std_d = statistics.stdev(data)
+
+    # Cp：只考虑离散度
+    cp = (usl - lsl) / (6 * std_d) if std_d > 0 else float('inf')
+
+    # Cpk：考虑偏移
+    cpu = (usl - mean_d) / (3 * std_d) if std_d > 0 else float('inf')
+    cpl = (mean_d - lsl) / (3 * std_d) if std_d > 0 else float('inf')
+    cpk = min(cpu, cpl)
+
+    # Cp 的置信区间（卡方分布）
+    alpha = 1 - conf_level
+    chi2_low = chi2_ppf(alpha / 2, n - 1)
+    chi2_high = chi2_ppf(1 - alpha / 2, n - 1)
+
+    cp_low = cp * math.sqrt(chi2_low / (n - 1)) if chi2_low > 0 else 0
+    cp_high = cp * math.sqrt(chi2_high / (n - 1))
+
+    print(f"\n  {'='*50}")
+    print(f"  【任务3】过程能力分析 —— Cp/Cpk")
+    print(f"  {'='*50}")
+    print(f"  规格:")
+    print(f"    目标值: {target} Ω")
+    print(f"    规格上限 (USL): {usl} Ω")
+    print(f"    规格下限 (LSL): {lsl} Ω")
+    print(f"    公差范围: {usl - lsl} Ω")
+    print(f"\n  过程能力指数:")
+    print(f"    过程标准差 σ: {std_d:.4f} Ω")
+    print(f"    Cp = (USL-LSL)/(6σ) = {cp:.4f}")
+    print(f"    CPU = (USL-μ)/(3σ) = {cpu:.4f}")
+    print(f"    CPL = (μ-LSL)/(3σ) = {cpl:.4f}")
+    print(f"    Cpk = min(CPU, CPL) = {cpk:.4f}")
+    print(f"\n  Cp 的 {conf_level:.0%} 置信区间:")
+    print(f"    [{cp_low:.4f}, {cp_high:.4f}]")
+
+    # 过程能力等级判定
+    print(f"\n  过程能力等级:")
+    if cpk >= 2.0:
+        grade = "A++（六西格玛级）"
+        comment = "世界级质量水平"
+    elif cpk >= 1.67:
+        grade = "A+（超优）"
+        comment = "高质量水平，适合关键部件"
+    elif cpk >= 1.33:
+        grade = "A（优）"
+        comment = "过程能力充足"
+    elif cpk >= 1.0:
+        grade = "B（良）"
+        comment = "过程能力一般，需监控"
+    elif cpk >= 0.67:
+        grade = "C（差）"
+        comment = "过程能力不足，需改进"
+    else:
+        grade = "D（不合格）"
+        comment = "过程严重不足，立即停产整改"
+
+    print(f"    Cpk = {cpk:.4f} → {grade}")
+    print(f"    说明: {comment}")
+
+    # 理论不合格率
+    z_upper = (usl - mean_d) / std_d if std_d > 0 else float('inf')
+    z_lower = (mean_d - lsl) / std_d if std_d > 0 else float('inf')
+    p_defect_upper = 1 - normal_cdf(z_upper)
+    p_defect_lower = 1 - normal_cdf(z_lower)
+    p_total = p_defect_upper + p_defect_lower
+    print(f"\n  理论不合格率 (基于正态假设):")
+    print(f"    超出 USL: {p_defect_upper:.6f} ({p_defect_upper*1e6:.1f} ppm)")
+    print(f"    低于 LSL: {p_defect_lower:.6f} ({p_defect_lower*1e6:.1f} ppm)")
+    print(f"    总不合格率: {p_total:.6f} ({p_total*1e6:.1f} ppm)")
+
+    return cp, cpk, cp_low, cp_high
+
+
+# ============================================================
+# 第5步：任务4 — 贝叶斯更新（来料批次品质估计）
+# ============================================================
+
+def bayesian_batch_update(prior_mean, prior_std, prior_n,
+                          sample_mean, sample_std, sample_n):
     """
-    正态分布均值的贝叶斯更新。
-    使用 Normal-Inverse-Gamma 共轭先验的简化版。
+    正态分布均值的贝叶斯更新——用于来料批次品质估计。
 
-    假设：方差已知（用样本方差代替），先验为 N(prior_mean, prior_std²/prior_n)
+    先验：来自历史批次的均值和标准差
+    数据：当前批次的抽检结果
+    返回：后验均值和标准差
     """
     # 先验精度
     prior_precision = prior_n / (prior_std ** 2) if prior_std > 0 else 0
@@ -269,7 +360,7 @@ def bayesian_demand_update(prior_mean, prior_std, prior_n,
     if prior_precision + data_precision > 0:
         posterior_mean = (prior_precision * prior_mean +
                           data_precision * sample_mean) / \
-                          (prior_precision + data_precision)
+                         (prior_precision + data_precision)
     else:
         posterior_mean = sample_mean
 
@@ -277,286 +368,136 @@ def bayesian_demand_update(prior_mean, prior_std, prior_n,
     posterior_var = 1.0 / (prior_precision + data_precision)
     posterior_std = math.sqrt(posterior_var) if posterior_var > 0 else 0
 
-    return posterior_mean, posterior_std
+    return posterior_mean, posterior_std, prior_precision, data_precision
 
 
-def question3_bayesian(demand_data):
-    """问题3：贝叶斯推断"""
-    print(f"\n{'='*80}")
-    print("问题3：贝叶斯推断——需求参数的不确定性")
-    print(f"{'='*80}")
+def question4_bayesian(data):
+    """任务4：贝叶斯更新来料批次品质"""
+    print(f"\n  {'='*50}")
+    print(f"  【任务4】贝叶斯更新 —— 来料批次品质估计")
+    print(f"  {'='*50}")
 
-    # 运营经理的经验先验
-    # 他认为日需求均值约 180，标准差约 50（不太确定，等效于 n=20 的样本）
-    prior_mean = 180
-    prior_std = 50
+    # 先验：历史批次数据
+    # 历史批次均值约 100.3Ω，标准差约 2.0Ω，等效样本量 20
+    prior_mean = 100.3
+    prior_std = 2.0
     prior_n = 20
 
-    # 数据
-    sample_mean = statistics.mean(demand_data)
-    sample_std = statistics.stdev(demand_data)
-    sample_n = len(demand_data)
+    # 抽检当前批次 30 个样品
+    random.seed(123)  # 固定的种子用于可复现
+    batch_sample = random.sample(data, min(30, len(data)))
+    sample_mean = statistics.mean(batch_sample)
+    sample_std = statistics.stdev(batch_sample)
+    sample_n = len(batch_sample)
 
-    print(f"\n  先验信息（运营经理经验）:")
-    print(f"    先验均值: {prior_mean}")
-    print(f"    先验标准差: {prior_std}")
+    print(f"\n  先验信息（历史批次）:")
+    print(f"    先验均值: {prior_mean} Ω")
+    print(f"    先验标准差: {prior_std} Ω")
     print(f"    先验等效样本量: {prior_n}")
 
-    print(f"\n  观测数据:")
-    print(f"    样本均值: {sample_mean:.2f}")
-    print(f"    样本标准差: {sample_std:.2f}")
-    print(f"    样本量: {sample_n}")
+    print(f"\n  当前批次抽检 (n={sample_n}):")
+    print(f"    样本均值: {sample_mean:.4f} Ω")
+    print(f"    样本标准差: {sample_std:.4f} Ω")
 
     # 贝叶斯更新
-    post_mean, post_std = bayesian_demand_update(
+    post_mean, post_std, prior_prec, data_prec = bayesian_batch_update(
         prior_mean, prior_std, prior_n,
         sample_mean, sample_std, sample_n
     )
 
     print(f"\n  贝叶斯后验:")
-    print(f"    后验均值: {post_mean:.2f}")
-    print(f"    后验标准差: {post_std:.2f}")
+    print(f"    后验均值: {post_mean:.4f} Ω")
+    print(f"    后验标准差: {post_std:.4f} Ω")
     print(f"    后验 95% 可信区间: "
-          f"[{post_mean - 1.96 * post_std:.2f}, "
-          f"{post_mean + 1.96 * post_std:.2f}]")
+          f"[{post_mean - 1.96 * post_std:.4f}, "
+          f"{post_mean + 1.96 * post_std:.4f}] Ω")
 
-    print(f"\n  对比:")
+    print(f"\n  方法对比:")
     print(f"    先验均值: {prior_mean}")
-    print(f"    MLE（样本均值）: {sample_mean:.2f}")
-    print(f"    后验均值: {post_mean:.2f}")
-    print(f"    → 贝叶斯估计是先验和数据的加权平均")
+    print(f"    MLE（样本均值）: {sample_mean:.4f}")
+    print(f"    后验均值: {post_mean:.4f}")
+    print(f"    → 后验是先验和 MLE 的精度加权平均")
 
-    # 如果先验和数据差异很大，后验"拉回"先验
-    print(f"\n  洞察: 数据量大（n={sample_n}），数据主导后验。")
-    print(f"  后验 ≈ MLE = {sample_mean:.2f}")
+    # 权重解释
+    total_prec = prior_prec + data_prec
+    prior_weight = prior_prec / total_prec * 100 if total_prec > 0 else 0
+    data_weight = data_prec / total_prec * 100 if total_prec > 0 else 0
+    print(f"\n  权重分析:")
+    print(f"    先验权重: {prior_weight:.1f}%")
+    print(f"    数据权重: {data_weight:.1f}%")
+    print(f"    → 先验权重 = 精度加权，等效样本量越大权重越高")
+
+    # 判断批次是否合格（基于后验均值与规格的比较）
+    if post_mean >= 99.5 and post_mean <= 100.5:
+        print(f"\n  ✅ 基于贝叶斯更新，该批次品质合格")
+        print(f"    后验均值 {post_mean:.2f} Ω 在目标范围 [99.5, 100.5] Ω 内")
+    else:
+        print(f"\n  ⚠️ 基于贝叶斯更新，该批次品质偏离预期")
+        print(f"    后验均值 {post_mean:.2f} Ω 超出目标范围 [99.5, 100.5] Ω")
 
     return post_mean, post_std
 
 
 # ============================================================
-# 第5步：问题4 — 假设检验（供应商选择）
+# 第6步：控制图统计量
 # ============================================================
 
-def two_sample_t_test(data1, data2, alternative='two-sided'):
+def control_chart_stats(data, subgroup_size=5):
     """
-    双样本 t 检验（Welch's t-test，不假设方差相等）。
-    纯 Python 实现。
+    生成 X̄-R 控制图统计量（文本输出）。
+    X̄ 图监控均值偏移，R 图监控离散度变化。
     """
-    n1, n2 = len(data1), len(data2)
-    mean1, mean2 = statistics.mean(data1), statistics.mean(data2)
-    var1 = statistics.variance(data1) if n1 > 1 else 0
-    var2 = statistics.variance(data2) if n2 > 1 else 0
+    n = len(data)
+    k = n // subgroup_size  # 子组数量
+    subgroups = [data[i * subgroup_size:(i + 1) * subgroup_size] for i in range(k)]
 
-    # t 统计量
-    se = math.sqrt(var1 / n1 + var2 / n2)
-    if se == 0:
-        return 0, 1.0
-    t_stat = (mean1 - mean2) / se
+    xbar_list = [statistics.mean(sg) for sg in subgroups]
+    r_list = [max(sg) - min(sg) for sg in subgroups]
 
-    # Welch-Satterthwaite 自由度
-    if var1 == 0 and var2 == 0:
-        df = 1
+    xbar_bar = statistics.mean(xbar_list)
+    r_bar = statistics.mean(r_list)
+
+    # 控制图常数（n=5）
+    A2 = 0.577   # X̄ 图控制限系数
+    D3 = 0       # R 图下控制限系数
+    D4 = 2.114   # R 图上控制限系数
+
+    # X̄ 图控制限
+    ucl_x = xbar_bar + A2 * r_bar
+    lcl_x = xbar_bar - A2 * r_bar
+
+    # R 图控制限
+    ucl_r = D4 * r_bar
+    lcl_r = D3 * r_bar
+
+    print(f"\n  {'='*50}")
+    print(f"  控制图分析 (X̄-R 图)")
+    print(f"  {'='*50}")
+    print(f"  子组大小: n={subgroup_size}")
+    print(f"  子组数量: k={k}")
+    print(f"\n  X̄ 图 (均值控制图):")
+    print(f"    中心线 (X̄̿): {xbar_bar:.4f} Ω")
+    print(f"    上控制限 (UCL): {ucl_x:.4f} Ω")
+    print(f"    下控制限 (LCL): {lcl_x:.4f} Ω")
+    print(f"\n  R 图 (极差控制图):")
+    print(f"    中心线 (R̄): {r_bar:.4f} Ω")
+    print(f"    上控制限 (UCL): {ucl_r:.4f} Ω")
+    print(f"    下控制限 (LCL): {lcl_r:.4f} Ω")
+
+    # 检查是否有超出控制限的子组
+    out_of_control_x = sum(1 for x in xbar_list if x > ucl_x or x < lcl_x)
+    out_of_control_r = sum(1 for r in r_list if r > ucl_r)
+
+    print(f"\n  异常检测:")
+    print(f"    X̄ 图超出控制限的子组数: {out_of_control_x}/{k}")
+    print(f"    R 图超出控制限的子组数: {out_of_control_r}/{k}")
+
+    if out_of_control_x == 0 and out_of_control_r == 0:
+        print(f"  ✅ 过程处于统计受控状态（所有子组在控制限内）")
     else:
-        num = (var1 / n1 + var2 / n2) ** 2
-        denom = (var1 / n1) ** 2 / (n1 - 1) + (var2 / n2) ** 2 / (n2 - 1)
-        df = num / denom if denom > 0 else 1
+        print(f"  ⚠️ 过程存在异常——需要调查特殊原因")
 
-    # t 分布 CDF 近似（大量计算用标准正态近似）
-    # 对于 df > 30，t ≈ N(0,1)
-    if df > 30:
-        if alternative == 'two-sided':
-            p_value = 2 * (1 - normal_cdf(abs(t_stat)))
-        elif alternative == 'greater':
-            p_value = 1 - normal_cdf(t_stat)
-        else:
-            p_value = normal_cdf(t_stat)
-    else:
-        # 简化：用正态近似（实际应用中应查 t 分布表）
-        if alternative == 'two-sided':
-            p_value = 2 * (1 - normal_cdf(abs(t_stat)))
-        elif alternative == 'greater':
-            p_value = 1 - normal_cdf(t_stat)
-        else:
-            p_value = normal_cdf(t_stat)
-
-    return t_stat, p_value, mean1, mean2
-
-
-def question4_hypothesis():
-    """问题4：假设检验"""
-    print(f"\n{'='*80}")
-    print("问题4：假设检验——供应商补货时间比较")
-    print(f"{'='*80}")
-
-    # 生成数据
-    lt_a = generate_leadtime_data(30, 'A')
-    lt_b = generate_leadtime_data(30, 'B')
-
-    print(f"\n  供应商 A 补货时间:")
-    print(f"    均值: {statistics.mean(lt_a):.2f} 天")
-    print(f"    标准差: {statistics.stdev(lt_a):.2f} 天")
-
-    print(f"\n  供应商 B 补货时间:")
-    print(f"    均值: {statistics.mean(lt_b):.2f} 天")
-    print(f"    标准差: {statistics.stdev(lt_b):.2f} 天")
-
-    print(f"\n  假设检验:")
-    print(f"    H₀: μ_A = μ_B（补货时间无差异）")
-    print(f"    H₁: μ_A < μ_B（A 比 B 更快）")
-    print(f"    α = 0.05（显著性水平）")
-
-    t_stat, p_value, mean_a, mean_b = two_sample_t_test(
-        lt_a, lt_b, alternative='less'
-    )
-
-    print(f"\n    Welch t 检验结果:")
-    print(f"    t 统计量: {t_stat:.4f}")
-    print(f"    p 值: {p_value:.4f}")
-    print(f"    均值差: {mean_a - mean_b:.4f} 天")
-
-    if p_value < 0.05:
-        print(f"\n    ✅ p={p_value:.4f} < 0.05 → 拒绝 H₀")
-        print(f"    结论：供应商 A 的补货时间显著快于 B")
-    else:
-        print(f"\n    ⚠️ p={p_value:.4f} >= 0.05 → 不能拒绝 H₀")
-        print(f"    结论：没有足够证据表明 A 比 B 快")
-
-    return lt_a, lt_b
-
-
-# ============================================================
-# 第6步：问题5 — 蒙特卡洛仿真安全库存
-# ============================================================
-
-def monte_carlo_inventory(daily_demand, lead_time_samples,
-                           reorder_point, order_qty,
-                           sim_days=10000, initial_stock=1000):
-    """
-    蒙特卡洛库存仿真。
-
-    仿真一个 (s, Q) 连续检查库存系统：
-    - 当库存 ≤ reorder_point(s) 时，订购 order_qty(Q) 件
-    - 补货需要 lead_time 天（从 lead_time_samples 中随机抽样）
-    - 每天的需求从 daily_demand 中随机抽样
-
-    返回服务水平、缺货次数、平均库存等统计量。
-    """
-    stock = initial_stock
-    on_order = 0  # 订购中但未到的数量
-    remaining_lead_time = 0  # 当前订单还需要多少天到货
-
-    total_demand = 0
-    stockout_days = 0
-    total_stockout_qty = 0
-    stock_record = []
-
-    for day in range(sim_days):
-        # 检查是否需要到货
-        if remaining_lead_time > 0:
-            remaining_lead_time -= 1
-            if remaining_lead_time == 0:
-                stock += order_qty
-                on_order = 0
-
-        # 当天需求
-        demand = random.choice(daily_demand)
-        total_demand += demand
-
-        # 满足需求
-        if stock >= demand:
-            stock -= demand
-        else:
-            stockout_days += 1
-            total_stockout_qty += demand - stock
-            stock = 0
-
-        # 检查是否需要订货
-        if stock <= reorder_point and on_order == 0:
-            lead_time = random.choice(lead_time_samples)
-            remaining_lead_time = max(1, int(round(lead_time)))
-            on_order = order_qty
-
-        # 记录库存
-        stock_record.append(stock)
-
-    service_level = 1 - stockout_days / sim_days
-    avg_stock = statistics.mean(stock_record)
-    max_stock = max(stock_record)
-
-    return {
-        "service_level": service_level,
-        "stockout_days": stockout_days,
-        "total_stockout_qty": total_stockout_qty,
-        "avg_stock": avg_stock,
-        "max_stock": max_stock,
-        "stock_record": stock_record,
-    }
-
-
-def question5_monte_carlo(demand_data, lead_times):
-    """问题5：蒙特卡洛仿真"""
-    print(f"\n{'='*80}")
-    print("问题5：蒙特卡洛仿真——安全库存与服务水平")
-    print(f"{'='*80}")
-
-    mean_demand = statistics.mean(demand_data)
-    std_demand = statistics.stdev(demand_data)
-
-    # 仿真参数
-    order_qty = 5000          # 每次订货量
-    sim_days = 10000          # 仿真天数
-
-    print(f"\n  仿真参数:")
-    print(f"    日需求均值: {mean_demand:.2f}")
-    print(f"    日需求标准差: {std_demand:.2f}")
-    print(f"    每次订货量: {order_qty}")
-    print(f"    仿真天数: {sim_days}")
-    print(f"    补货时间样本量: {len(lead_times)}")
-
-    # 尝试不同的再订货点
-    base_reorder = int(mean_demand * statistics.mean(lead_times))  # 基础：日需×平均补货时间
-    reorder_points = [
-        base_reorder,
-        base_reorder + int(0.5 * std_demand * math.sqrt(statistics.mean(lead_times))),
-        base_reorder + int(1.0 * std_demand * math.sqrt(statistics.mean(lead_times))),
-        base_reorder + int(1.645 * std_demand * math.sqrt(statistics.mean(lead_times))),
-        base_reorder + int(2.0 * std_demand * math.sqrt(statistics.mean(lead_times))),
-    ]
-
-    print(f"\n  安全库存策略扫描:")
-    print(f"  {'再订货点':>10} {'安全库存':>10} {'服务水平':>10} {'缺货天数':>10} {'平均库存':>10}")
-    print(f"  {'-'*50}")
-
-    results = []
-    for rp in reorder_points:
-        safety = rp - base_reorder
-        result = monte_carlo_inventory(
-            demand_data, lead_times, rp, order_qty, sim_days
-        )
-        results.append((rp, safety, result))
-        print(f"  {rp:>10} {safety:>10} "
-              f"{result['service_level']:.4f}      "
-              f"{result['stockout_days']:>4}    "
-              f"{result['avg_stock']:>8.1f}")
-
-    # 找到满足 95% 服务水平的最小安全库存
-    print(f"\n  分析:")
-    target = 0.95
-    found = False
-    for rp, safety, result in results:
-        if result['service_level'] >= target:
-            print(f"  ✅ 满足 {target:.0%} 服务水平的最小再订货点: {rp}")
-            print(f"     对应安全库存: {safety}")
-            print(f"     实际服务水平: {result['service_level']:.4f}")
-            print(f"     平均库存: {result['avg_stock']:.1f}")
-            found = True
-            break
-
-    if not found:
-        print(f"  ⚠️ 当前策略未达到 {target:.0%} 服务水平")
-        print(f"  → 需要更大的安全库存")
-
-    return results
+    return xbar_bar, r_bar, ucl_x, lcl_x
 
 
 # ============================================================
@@ -564,95 +505,77 @@ def question5_monte_carlo(demand_data, lead_times):
 # ============================================================
 
 def main():
-    print("=" * 80)
-    print("🏆 毕业项目：库存决策的完整概率分析")
-    print("=" * 80)
+    print("=" * 60)
+    print("🏆 毕业项目：质量管控的完整统计分析")
+    print("=" * 60)
+    print("场景：电阻生产 | 标称值 100Ω | 公差 ±5%")
+    print("=" * 60)
 
     random.seed(42)
 
     # ========= 生成模拟数据 =========
-    print(f"\n{'='*80}")
-    print("数据准备：生成模拟历史数据")
-    print(f"{'='*80}")
+    print(f"\n{'='*60}")
+    print("数据准备：生成 1000 个电阻阻值数据")
+    print(f"{'='*60}")
 
-    demand_data, true_mu, true_sigma = generate_demand_data(500, 200, 40)
-    print(f"  生成 {len(demand_data)} 天日需求数据（真实 μ={true_mu}, σ={true_sigma}）")
-    print(f"  数据范围: [{min(demand_data):.2f}, {max(demand_data):.2f}]")
+    resistance_data, true_mu, process_sigma = generate_resistance_data(
+        n=1000, target=100.0, process_sigma=1.8, shift=0.5
+    )
+    print(f"  真实工艺均值: {true_mu} Ω")
+    print(f"  真实过程标准差: {process_sigma} Ω")
+    print(f"  数据范围: [{min(resistance_data):.4f}, {max(resistance_data):.4f}] Ω")
 
-    lt_a = generate_leadtime_data(30, 'A')
-    lt_b = generate_leadtime_data(30, 'B')
-    print(f"  生成供应商 A 补货时间: {len(lt_a)} 条")
-    print(f"  生成供应商 B 补货时间: {len(lt_b)} 条")
+    # ========= 任务1：分布拟合 =========
+    mean_d, std_d = assess_distribution(resistance_data)
 
-    # ========= 问题1：分布识别 =========
-    print(f"\n{'='*80}")
-    print("问题1：需求分布识别")
-    print(f"{'='*80}")
+    # ========= 任务2：假设检验 =========
+    t_stat, p_value, shift_est = one_sample_t_test(resistance_data, mu0=100.0)
 
-    dist_type, param1, param2 = assess_distribution(demand_data)
+    # ========= 任务3：过程能力分析 =========
+    cp, cpk, cp_low, cp_high = process_capability(resistance_data)
 
-    # ========= 问题2：CLT 月需求 =========
-    print(f"\n{'='*80}")
-    print("问题2：月总需求分布（CLT）")
-    print(f"{'='*80}")
+    # ========= 控制图 =========
+    control_chart_stats(resistance_data, subgroup_size=5)
 
-    monthly_mean, monthly_std = clt_monthly_analysis(dist_type, param1, param2)
-
-    # ========= 问题3：贝叶斯推断 =========
-    post_mean, post_std = question3_bayesian(demand_data)
-
-    # ========= 问题4：假设检验 =========
-    lt_a_data, lt_b_data = question4_hypothesis()
-
-    # ========= 问题5：蒙特卡洛仿真 =========
-    # 使用较快的供应商（A）
-    best_lead_times = lt_a_data
-    results = question5_monte_carlo(demand_data, best_lead_times)
+    # ========= 任务4：贝叶斯更新 =========
+    post_mean, post_std = question4_bayesian(resistance_data)
 
     # ========= 最终报告 =========
-    print(f"\n{'='*80}")
-    print("📋 最终决策建议")
-    print(f"{'='*80}")
-
-    final_rp = results[0][0]  # 基础再订货点
-    for rp, safety, r in results:
-        if r['service_level'] >= 0.95:
-            final_rp = rp
-            break
+    print(f"\n{'='*60}")
+    print("📋 质量控制最终报告")
+    print(f"{'='*60}")
 
     print(f"""
-基于以上完整的概率分析，我们推荐以下库存策略：
+基于以上完整的统计分析，我们得出以下质量控制结论：
 
-1. 需求参数:
-   - 日需求均值 ≈ {statistics.mean(demand_data):.1f}
-   - 日需求标准差 ≈ {statistics.stdev(demand_data):.1f}
-   - 最适配分布: {dist_type}
+1. 阻值分布:
+   - 均值 ≈ {mean_d:.2f} Ω（目标 100Ω）
+   - 标准差 ≈ {std_d:.2f} Ω
+   - 分布类型: 正态分布（QQ 相关性确认）
 
-2. 月需求（基于 CLT）:
-   - 月需求均值 ≈ {monthly_mean:.0f}
-   - 月需求标准差 ≈ {monthly_std:.0f}
+2. 工艺偏移检验:
+   - 实际偏移量: {shift_est:.4f} Ω
+   - p 值: {p_value:.6f}
+   - 结论: {"工艺存在显著偏移" if p_value < 0.05 else "工艺无明显偏移"}
 
-3. 供应商选择:
-   - 推荐使用补货时间更快的供应商 A
-   - （假设检验确认显著差异）
+3. 过程能力:
+   - Cp = {cp:.4f}
+   - Cpk = {cpk:.4f}
+   - Cp 95% CI: [{cp_low:.4f}, {cp_high:.4f}]
+   - 过程能力等级: {"充足" if cpk >= 1.33 else "需改进" if cpk >= 1.0 else "不合格"}
 
-4. 库存策略参数:
-   - 再订货点: {final_rp}
-   - 安全库存: {final_rp - results[0][0]}
-   - 订货量: 5000
-   - 预期服务水平: ≥ 95%
+4. 贝叶斯批次品质:
+   - 后验均值: {post_mean:.4f} Ω
+   - 后验标准差: {post_std:.4f} Ω
 
-5. 关键不确定性:
-   - 需求参数仍有不确定性（后验标准差 ≈ {post_std:.2f}）
-   - 建议每月重新评估需求分布和补货时间
-   - 如果服务水平低于 90%，增加安全库存
-
-🎯 结论：通过概率分析，我们量化了不确定性，
-   找到了满足 95% 服务水平的最优库存策略。
+5. 关键行动建议:
+   - Cp > 1.33 说明过程精度够 → 调均值到 100Ω 即可
+   - Cp < 1.33 说明过程离散度偏大 → 需要改进工艺
+   - 建议频率: 每批次抽检 30 个样品，用贝叶斯更新监控品质趋势
 """)
-    print("=" * 80)
-    print("毕业项目完成！所有技能已串联应用。")
-    print("=" * 80)
+    print("=" * 60)
+    print("毕业项目完成！所有统计技能已应用于质量管控。")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
