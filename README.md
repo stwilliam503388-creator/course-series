@@ -106,8 +106,9 @@ python3 code/case07_nsga2.py
 - **Karpathy 四原则**：先思考、简单至上、手术刀式修改、目标驱动执行
 - **统一课程模板**：术语速查 → 背景 → 方法 → 5 案例 → 毕业项目 → 附录
 - **每个案例**：场景→建模→方法→代码→结果→验证标准→洞察→延伸
-- **所有代码可运行**：核心案例仅需 Python 标准库 + numpy；部分进阶案例需 scipy/pyomo/simpy（见 `requirements.txt`）
-- **C++ 版本**：核心算法提供 C++ 实现（编译: `g++ -O2 -o xxx xxx.cpp && ./xxx`）
+- **所有代码可运行**：Python + numpy/matplotlib/scipy/pyomo/simpy，`python3 xxx.py` 即用
+- **一键安装依赖**：`pip install -r requirements.txt`
+- **C++ 版本**：核心算法提供 C++ 实现（编译: `g++ -O2 -std=c++11 -o xxx xxx.cpp && ./xxx`）
 
 ---
 
