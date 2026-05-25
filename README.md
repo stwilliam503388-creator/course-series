@@ -115,6 +115,9 @@ python3 code/case07_nsga2.py
 ## 快速验证
 
 ```bash
+# 安装依赖
+pip install -r requirements.txt
+
 # 列出所有代码
 make list
 

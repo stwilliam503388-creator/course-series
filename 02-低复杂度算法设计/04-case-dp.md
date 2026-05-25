@@ -273,4 +273,20 @@ j 从大到小: 10 → 9 → ... → 4 → 3 → 2 → 1 → 0
 
 ---
 
+---
+
+## C++ 版本
+
+本案例的背包 DP 提供 C++ 实现，位于 `code/case04_knapsack_cpp.cpp`。编译与运行：
+
+```bash
+cd code
+g++ -O2 -std=c++11 case04_knapsack_cpp.cpp -o case04_knapsack_cpp
+./case04_knapsack_cpp
+```
+
+C++ 版本实现了二维 DP 和一维滚动数组两种方法，并输出与 Python 版本一致的暴力 vs DP 提速对比表。在 n=30 时，C++ DP 的微秒级运行时间让 O(2ⁿ) 与 O(n·W) 的天壤之别更加直观。
+
+---
+
 > [文件完，下一个: 05-case-search.md]

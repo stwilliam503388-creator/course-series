@@ -163,6 +163,9 @@ python --version  # >= 3.9
 | `appendix-c-ml-intersection.md` | 附录C：算法优化与 ML 的交叉点 | ~800 | - |
 | `appendix-d-reading-list.md` | 附录D：推荐阅读 | ~500 | - |
 
+> **C++ 版本**：案例1（归并排序）和案例2（背包DP）提供 C++ 实现，位于 `code/` 目录下，文件名含 `_cpp` 后缀。
+
+
 ---
 
 ## 致谢

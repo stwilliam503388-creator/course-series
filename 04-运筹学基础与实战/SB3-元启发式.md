@@ -152,4 +152,18 @@ SA 的降温速率、GA 的种群大小/变异率——这些参数的效果差�
 
 ---
 
+## C++ 版本
+
+本教程的模拟退火（SA）和遗传算法（GA）均提供 C++ 实现，位于 `code/case_metaheuristic_tsp_cpp.cpp`。编译与运行：
+
+```bash
+cd code
+g++ -O2 -std=c++11 case_metaheuristic_tsp_cpp.cpp -o case_metaheuristic_tsp_cpp
+./case_metaheuristic_tsp_cpp
+```
+
+C++ 版本完全复刻 Python 版本的功能：贪心基线、SA 降温寻优、GA 种群进化——三者在 n=20/50/100 三个规模上的对比结果与 Python 版本一致。C++ 的性能优势在 n=100 时最为明显，让你可以快速尝试更大规模的城市数据。
+
+---
+
 > 下一个: [SB4: 建模实战 — 产品组合优化](SB4-建模实战.md)
